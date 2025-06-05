@@ -7,78 +7,95 @@ export interface DatasetMetadata {
   id: string; // This will likely be generated upon storage
   title: string;
   summary: string;
+  description?: string; // Detailed description of the dataset
   tags: string[];
   source_url: string; // Original URL from search result
   file_url: string; // URL where the file is stored (after download/processing)
-  file_type: "PDF" | "CSV" | "Web" | "ZIP";
+  file_type: "PDF" | "CSV" | "Web" | "ZIP" | "JSON";
   country: string;
   ai_score: number; // Relevance score
   created_at: string; // Timestamp
+  author?: string; // Author or organization that created the dataset
+  author_type?: string; // Type of author (e.g., "Government", "NGO", "Research")
+  size?: string; // Size of the file
+  downloads?: number; // Number of downloads
+  views?: number; // Number of views
+  last_updated?: string; // When the dataset was last updated
+  is_paid?: boolean; // Whether the dataset is paid
+  price?: string; // Price of the dataset if paid
+  rating?: number; // Rating of the dataset
+  reviews?: number; // Number of reviews
+  license?: string; // License of the dataset
+  columns?: number; // Number of columns in the dataset
+  rows?: number; // Number of rows in the dataset
+  files?: { name: string; size: string }[]; // List of files in the dataset
 }
-
-// Initialize Gemini (ensure API key is available as an environment variable)
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export async function generateMetadata(
   content: string, // Content extracted from the source (e.g., text from PDF, sample from CSV, summary from web page)
-  fileType: "PDF" | "CSV" | "Web" | "ZIP",
+  fileType: "PDF" | "CSV" | "Web" | "ZIP" | "JSON",
   sourceUrl: string // Original URL needed for metadata
 ): Promise<DatasetMetadata | null> {
   console.log(`Generating metadata for ${fileType} source from ${sourceUrl} using Gemini API.`);
 
   // Prompt for Gemini to extract structured metadata
-  const prompt = `Analyze the following content from a ${fileType} file found at ${sourceUrl}. Extract the following information and return it as a JSON object:\n\n-   title: A concise title for the dataset.\n-   summary: A brief summary of the dataset content.\n-   tags: An array of relevant keywords or tags.\n-   country: The primary country the dataset relates to (infer from content or URL if possible, return \"Unknown\" if not specific).\n-   ai_score: A relevance score for potential African use cases on a scale of 1 to 5 (1 being least relevant, 5 being most relevant).\n-   file_type: The type of the file (should be ${fileType}).\n- source_url: The original URL of the source.\n\nEnsure the output is a valid JSON object matching the following TypeScript interface structure:\n\ninterface DatasetMetadata {\n  title: string;\n  summary: string;\n  tags: string[];
-  country: string;
-  ai_score: number;
-  file_type: "PDF" | "CSV" | "Web" | "ZIP";
-  source_url: string;
-}\n\nHere is the content:\n\n${content}`;
+  const prompt = `Analyze the following content from a ${fileType} file found at ${sourceUrl}. Extract the following information and return it as a JSON object:\n\n-   title: A concise title for the dataset.\n-   summary: A brief summary of the dataset content.\n-   description: A detailed description of the dataset (if available).\n-   tags: An array of relevant keywords or tags.\n-   country: The primary country the dataset relates to (infer from content or URL if possible, return \"Unknown\" if not specific).\n-   ai_score: A relevance score for potential African use cases on a scale of 1 to 5 (1 being least relevant, 5 being most relevant).\n-   file_type: The type of the file (should be ${fileType}).\n-   source_url: The original URL of the source.\n-   author: The author or organization that created the dataset (if available).\n-   author_type: The type of author (e.g., "Government", "NGO", "Research") (if available).\n-   size: The size of the file (if available).\n-   license: The license of the dataset (if available).\n-   columns: The number of columns in the dataset (if applicable).\n-   rows: The number of rows in the dataset (if applicable).\n\nEnsure the output is a valid JSON object matching the following TypeScript interface structure:\n\ninterface DatasetMetadata {\n  title: string;\n  summary: string;\n  description?: string;\n  tags: string[];\n  country: string;\n  ai_score: number;\n  file_type: "PDF" | "CSV" | "Web" | "ZIP" | "JSON";\n  source_url: string;\n  author?: string;\n  author_type?: string;\n  size?: string;\n  license?: string;\n  columns?: number;\n  rows?: number;\n}\n\nHere is the content:\n\n${content}`;
 
   try {
+    // Initialize Gemini inside the function to avoid issues with module initialization in Server Components
+    const genAI = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+    });
+
     const result = await genAI.models.generateContent({
-      model: "gemini-pro",
+      model: "gemini-2.0-flash",
       contents: prompt,
     });
-    const responseText = result.text;
 
-    if (!responseText) {
+    // Get the text from the response
+    const text = result.text;
+    
+    if (!text) {
       console.error("Gemini API did not return text content.", result);
       return null; // Return null if no text content
     }
-
-    // Attempt to parse the JSON response
-    // The API might return markdown like ```json { ... } ```, so we need to handle that.
-    const jsonMatch = responseText.match(/```json\\n([\\s\\S]*)\\n```/);
-    let metadata: DatasetMetadata;
-
+    
+    // Extract JSON from markdown code blocks if present
+    let jsonText = text;
+    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (jsonMatch && jsonMatch[1]) {
-      metadata = JSON.parse(jsonMatch[1]);
-    } else {
-       // If no markdown, try parsing directly (assuming the model might just return the JSON object)
-       metadata = JSON.parse(responseText);
+      jsonText = jsonMatch[1].trim();
     }
+    
+    try {
+      const metadata = JSON.parse(jsonText);
 
-    // Validate the parsed metadata against the expected structure (basic validation)
-    if (!metadata || typeof metadata.title !== 'string' || typeof metadata.summary !== 'string' || !Array.isArray(metadata.tags) || typeof metadata.country !== 'string' || typeof metadata.ai_score !== 'number') {
-        console.error("Gemini API returned invalid metadata structure.", metadata);
-        return null; // Return null if the structure is unexpected
+      // Validate the parsed metadata against the expected structure (basic validation)
+      if (!metadata || typeof metadata.title !== 'string' || typeof metadata.summary !== 'string' || !Array.isArray(metadata.tags) || typeof metadata.country !== 'string' || typeof metadata.ai_score !== 'number') {
+          console.error("Gemini API returned invalid metadata structure.", metadata);
+          return null; // Return null if the structure is unexpected
+      }
+
+      // Add fields not generated by AI (or ensure they are correct)
+      // We already know fileType and sourceUrl from the function parameters
+      const completeMetadata: DatasetMetadata = {
+          ...metadata,
+          id: 'temp-id-' + Math.random().toString(36).substring(7), // Temporary ID
+          source_url: sourceUrl, // Ensure correct source URL is used
+          file_type: fileType, // Ensure correct file type is used
+          created_at: new Date().toISOString(),
+      };
+
+      console.log("Metadata generated successfully:");
+      console.log(completeMetadata);
+
+      return completeMetadata;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`Error parsing metadata JSON: ${errorMessage}`);
+      console.error(`Raw response: ${text}`);
+      throw new Error(`Failed to parse metadata JSON: ${errorMessage}`);
     }
-
-    // Add fields not generated by AI (or ensure they are correct)
-    // We already know fileType and sourceUrl from the function parameters
-    const completeMetadata: DatasetMetadata = {
-        ...metadata,
-        id: 'temp-id-' + Math.random().toString(36).substring(7), // Temporary ID
-        source_url: sourceUrl, // Ensure correct source URL is used
-        file_type: fileType, // Ensure correct file type is used
-        created_at: new Date().toISOString(),
-    };
-
-    console.log("Metadata generated successfully:");
-    console.log(completeMetadata);
-
-    return completeMetadata;
-
   } catch (error: any) {
     console.error(`Error generating metadata for ${sourceUrl}: ${error.message}`);
     return null; // Return null if API call or parsing fails

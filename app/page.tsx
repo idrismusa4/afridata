@@ -1,5 +1,8 @@
 "use client"
 
+import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { useSearch } from "@/contexts/SearchContext"
 import { motion } from "framer-motion"
 import {
   Search,
@@ -33,7 +36,45 @@ const staggerContainer = {
   },
 }
 
-export default function LandingPage() {
+export default function Home() {
+  const router = useRouter()
+  const { query, setQuery, search, triggerAgent } = useSearch()
+  const [isSearching, setIsSearching] = useState(false)
+
+  const handleSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!query.trim()) return
+
+    setIsSearching(true)
+    
+    try {
+      // Trigger the agent workflow and get results directly
+      console.log('Triggering agent workflow...')
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query: query }),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Error triggering agent:', errorData)
+      } else {
+        const data = await response.json()
+        console.log('Agent workflow completed:', data)
+      }
+      
+      // Navigate to the search results page
+      router.push(`/search?q=${encodeURIComponent(query)}`)
+    } catch (error) {
+      console.error("Error during search:", error)
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
       {/* Hero Section */}

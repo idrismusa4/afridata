@@ -10,7 +10,7 @@ import AdmZip from 'adm-zip'; // Import adm-zip for ZIP file handling
 
 interface ProcessedSource {
   metadata: DatasetMetadata;
-  fileContent?: Buffer; // Include file content for types like PDF, CSV, ZIP
+  fileContent?: Buffer; // Include file content for types like PDF, CSV, ZIP, JSON
 }
 
 export async function handleSource(searchResult: SearchResult): Promise<ProcessedSource | null> {
@@ -18,7 +18,7 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
 
   // Basic file type detection based on URL extension
   const url = searchResult.url.toLowerCase();
-  let fileType: 'PDF' | 'CSV' | 'Web' | 'ZIP' | 'Unknown' = 'Unknown';
+  let fileType: 'PDF' | 'CSV' | 'Web' | 'ZIP' | 'JSON' | 'Unknown' = 'Unknown';
 
   if (url.endsWith('.pdf')) {
     fileType = 'PDF';
@@ -26,6 +26,8 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
     fileType = 'CSV';
   } else if (url.endsWith('.zip')) {
     fileType = 'ZIP';
+  } else if (url.endsWith('.json')) {
+    fileType = 'JSON';
   } else if (url.startsWith('http') || url.startsWith('https')) {
      // This is a basic assumption; more robust checks might be needed
     fileType = 'Web';
@@ -60,10 +62,10 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
 
         // Parse a limited number of rows to get headers and a sample of data
         const records: any[] = await new Promise((resolve, reject) => {
-          parse(csvContentString, { columns: true, trim: true, rtrim: true, ltrim: true, on_record: (record, {lines}) => { 
+          parse(csvContentString, { columns: true, trim: true, rtrim: true, ltrim: true, on_record: (record, {lines}) => {
             // Limit the number of records parsed for content extraction
             if (lines > 10) return null; // Parse header + 10 data rows
-            return record; 
+            return record;
           }},
           (err, output) => {
             if (err) reject(err);
@@ -75,7 +77,7 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
           // Use headers and a few rows as content for AI to summarize/classify
           const headers = Object.keys(records[0]).join(', ');
           const sampleRows = records.slice(0, 5).map(row => Object.values(row).join(', ')).join('\n');
-          extractedContent = `CSV Headers: ${headers}\n\nSample Rows:\n${sampleRows}`;          
+          extractedContent = `CSV Headers: ${headers}\n\nSample Rows:\n${sampleRows}`;
           console.log("CSV content inspected successfully.");
         } else {
            extractedContent = "CSV file is empty or could not be parsed.";
@@ -121,6 +123,55 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
         return null; // Return null if ZIP handling fails
       }
       break;
+    case 'JSON':
+      console.log("Handling JSON: Downloading and inspecting content...");
+      try {
+        const response = await axios.get(searchResult.url);
+        const jsonContent = response.data; // axios automatically parses JSON
+        fileContent = Buffer.from(JSON.stringify(jsonContent)); // Store the JSON buffer
+
+        // Extract a summary of the JSON structure/content
+        if (typeof jsonContent === 'object' && jsonContent !== null) {
+            let contentSummary = "JSON content summary:\n";
+            const keys = Object.keys(jsonContent);
+            const limitedKeys = keys.slice(0, 10); // Limit the number of keys shown
+
+            for (const key of limitedKeys) {
+                let value = jsonContent[key];
+                let valuePreview = typeof value === 'object' && value !== null ? '{...}' : String(value).substring(0, 100); // Preview value
+                contentSummary += `- ${key}: ${valuePreview}\n`;
+            }
+            if (keys.length > 10) {
+                contentSummary += `... and ${keys.length - 10} more keys.\n`;
+            }
+             extractedContent = contentSummary;
+             console.log("JSON content inspected successfully.");
+
+        } else if (Array.isArray(jsonContent)) {
+            let contentSummary = `JSON array with ${jsonContent.length} elements.\n`;
+            const limitedElements = jsonContent.slice(0, 5); // Limit number of elements shown
+
+            for (const element of limitedElements) {
+                 let elementPreview = typeof element === 'object' && element !== null ? JSON.stringify(element).substring(0, 100) + '...' : String(element).substring(0, 100);
+                 contentSummary += `- ${elementPreview}\n`;
+            }
+             if (jsonContent.length > 5) {
+                contentSummary += `... and ${jsonContent.length - 5} more elements.\n`;
+            }
+            extractedContent = contentSummary;
+            console.log("JSON array content inspected successfully.");
+
+        } else {
+            // Handle primitive JSON types
+            extractedContent = `JSON Content: ${String(jsonContent).substring(0, 500)}...`;
+            console.log("JSON primitive content inspected successfully.");
+        }
+
+      } catch (error: any) {
+        console.error(`Error handling JSON ${searchResult.url}: ${error.message}`);
+        return null; // Return null if JSON handling fails
+      }
+      break;
     case 'Web':
       console.log("Handling Web Page: Scraping and summarizing relevant data...");
        const $ = await scrapePage(searchResult.url);
@@ -145,7 +196,7 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
   if (extractedContent) {
     const metadata = await generateMetadata(
       extractedContent,
-      fileType as 'PDF' | 'CSV' | 'Web' | 'ZIP', // Cast to valid file types for metadata
+      fileType as 'PDF' | 'CSV' | 'Web' | 'ZIP' | 'JSON', // Cast to valid file types for metadata
       searchResult.url // Pass the original source URL
     );
 
@@ -166,4 +217,4 @@ export async function handleSource(searchResult: SearchResult): Promise<Processe
 // async function downloadAndProcessPdf(url: string): Promise<any> { /* ... */ }
 // async function inspectAndProcessCsv(url: string): Promise<any> { /* ... */ }
 // async function downloadAndProcessZip(url: string): Promise<any> { /* ... */ }
-// async function scrapeAndProcessWebPage(searchResult: SearchResult): Promise<any> { /* ... */ } 
+// async function scrapeAndProcessWebPage(searchResult: SearchResult): Promise<any> { /* ... */ }
